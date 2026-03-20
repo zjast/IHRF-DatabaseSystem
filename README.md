@@ -1,6 +1,8 @@
 # 🐹 International Hamster Race Federation Database System
 Projekt systemu bazy danych zaprojektowany dla Międzynarodowej Federacji Wyścigów Chomików (IHRF). System zarządza danymi dotyczącymi zawodników (chomików), pracowników, sponsorów, finansowania oraz wyników zawodów w ramach Światowej Olimpiady Chomików (WHO).
 
+### Niniejsze repozytorium prezentuje mój wkład w projekt grupowy. Pliki zostały wyodrębnione i zanonimizowane. 
+
 ## O projekcie
 Celem projektu było stworzenie bazy danych oraz analizy dla federacji sportowej zajmującej się dwiema kategoriami wyścigów:
 
