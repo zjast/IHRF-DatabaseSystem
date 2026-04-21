@@ -1,0 +1,698 @@
+---
+title: "Raport z analizy"
+author: "Karolina Borowiec, Justyna Dudek, Zuzanna Jastrzębska, Kacper Józefkowicz, Patryk Wojtkowiak"
+lang: pl
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+    theme: flatly
+    fig_caption: true
+---
+<style>
+h1.title, h3.subtitle, h4.author, h4.date {
+text-align: center;
+}
+body{
+  text-align: justify;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+if (!require(DBI)) install.packages("DBI")
+if (!require(RMariaDB)) install.packages("RMariaDB")
+if (!require(plotly)) install.packages("plotly")
+if (!require(dplyr)) install.packages("dplyr")
+
+library(DBI)
+library(RMariaDB)
+library(plotly)
+library(dplyr)
+```
+
+```{r polaczenie_z_baza}
+mydb <- dbConnect(RMariaDB::MariaDB(), 
+                 dbname="team01", 
+                 user="team01",
+                 password="te@mzoi", 
+                 host="giniewicz.it")
+```
+
+# Popularność zawodów i poszczególnych konkurencji
+Celem tej sekcji jest przeanalizowanie popularności zawodów zarówno wśród
+uczestników, jak i&nbsp;wśród widzów. W przypadku uczestników analiza zostaje następnie
+rozszerzona na popularność poszczególnych konkurencji, a&nbsp;w&nbsp;przypadku widzów - 
+na zainteresowanie współzawodnictwem w&nbsp;konkretnych państwach i&nbsp;miastach. Ponadto
+zostanie ustalone, czy istnieje zależność pomiędzy liczbą uczestników zawodów
+a&nbsp;liczbą widzów.
+
+```{r popularnosc_zawodow}
+popularnosc.zawodow <- dbGetQuery(mydb, "
+SELECT 
+ id_zawodow, 
+ COUNT(id_uczestnika) AS liczba_uczestnikow 
+FROM zawody_uczestnicy 
+GROUP BY id_zawodow;")
+
+plot_ly(data = popularnosc.zawodow,
+       x = ~as.factor(id_zawodow),
+       y = ~liczba_uczestnikow,
+       type = "bar") %>%
+ layout(title = "Wykres 1: Popularność zawodów wśród uczestników",
+        xaxis = list(title = "ID Zawodów"),
+        yaxis = list(title = "Liczba uczestników"))
+
+rozmieszczenie_zawodow <- dbGetQuery(mydb, "
+SELECT 
+   panstwa.panstwo, 
+   COUNT(zawody.id_zawodow) AS liczba_zawodow
+FROM panstwa
+JOIN miasta ON panstwa.id_panstwa = miasta.id_panstwa
+JOIN zawody ON miasta.id_miasta = zawody.id_miasta
+GROUP BY panstwa.panstwo
+ORDER BY liczba_zawodow DESC;
+")
+
+
+kody_map <- c(
+   "Polska" = "POL",
+   "Francja" = "FRA",
+   "Włochy" = "ITA",
+   "Chiny" = "CHN",
+   "Czechy" = "CZE",
+   "USA" = "USA",
+   "Węgry" = "HUN",
+   "Brazylia" = "BRA",
+   "Australia" = "AUS",
+   "Niemcy" = "DEU"
+)
+
+rozmieszczenie_zawodow$kody <- kody_map[rozmieszczenie_zawodow$panstwo]
+
+plot_ly(data = rozmieszczenie_zawodow,
+       type = "scattergeo",
+       locations = ~kody,      
+       text = ~paste(panstwo, "Liczba zawodów:", liczba_zawodow),
+       marker = list(
+         size = ~liczba_zawodow,
+         color = ~liczba_zawodow,
+         sizemode = "area",
+         sizeref = 0.1,
+         showscale = TRUE,
+         colorbar = list(title = "Liczba zawodów"))) %>% 
+ layout(title = "Ilość zawodów w danym kraju",
+   geo = list(showcountries = TRUE ))
+```
+
+Liczba uczestników zawodów charakteryzuje się okresowymi wahaniami, nie&nbsp;występuje
+wyraźna tendencja malejąca ani rosnąca. Najwięcej uczestników wzięło udział
+w&nbsp;`r filter(popularnosc.zawodow, liczba_uczestnikow==max(liczba_uczestnikow))$id_zawodow`.
+zawodach, wystąpiło w&nbsp;nich `r filter(popularnosc.zawodow, liczba_uczestnikow==max(liczba_uczestnikow))$liczba_uczestnikow` uczestników. 
+Średnia liczba uczestników w&nbsp;dotychczasowych zawodach wynosi 
+`r summarise(popularnosc.zawodow, srednia=mean(liczba_uczestnikow))`. 
+
+```{r popularnosc_konkurencji}
+popularnosc.konkurencji <- dbGetQuery(mydb, "
+SELECT 
+   konkurencje.id_konkurencji,
+   konkurencje.nazwa_konkurencji,
+   YEAR(zawody.data_zawodow) AS rok,
+   COUNT(konkurencje_uczestnicy.id_uczestnika) AS liczba_uczestnikow
+FROM konkurencje 
+JOIN konkurencje_zawody ON konkurencje.id_konkurencji = konkurencje_zawody.id_konkurencji
+JOIN konkurencje_uczestnicy ON konkurencje_zawody.id_konkurencji = konkurencje_uczestnicy.id_konkurencji
+JOIN zawody ON konkurencje_zawody.id_zawodow = zawody.id_zawodow
+GROUP BY konkurencje.id_konkurencji, konkurencje.nazwa_konkurencji, rok
+ORDER BY konkurencje.id_konkurencji, rok;
+")
+
+plot_ly(data = popularnosc.konkurencji, 
+       x = ~as.factor(rok), 
+       y = ~liczba_uczestnikow, 
+       color = ~nazwa_konkurencji, 
+       type = "bar") %>%
+ layout(title = "Wykres 2: Popularność konkurencji na przestrzeni lat",
+        xaxis = list(title = "Rok"),
+        yaxis = list(title = "Liczba uczestników"),
+        barmode = "group")
+
+uczestnicy.lacznie <- popularnosc.konkurencji %>% 
+ group_by(nazwa_konkurencji) %>% 
+   summarise(suma=sum(liczba_uczestnikow))
+```
+
+W&nbsp;analizowanym przedziale sześciu lat najbardziej popularnymi konkurencjami były
+maraton, wyścig w&nbsp;Formule&nbsp;Ch, labirynt oraz limbo. Najmniejsze zainteresowanie
+wzbudził bieg z&nbsp;przeszkodami. Najbardziej wyraźna tendencja rosnąca występuje
+w&nbsp;popularności sprintu, z&nbsp;kolei najwyższy wzrost popularności
+w&nbsp;pojedynczym roku dotyczył biegu z&nbsp;obciążeniem - konkurencja ta miała `r filter(popularnosc.konkurencji, nazwa_konkurencji=="Bieg z obciążeniem", rok=="2023")$liczba_uczestnikow` uczestników&nbsp;w&nbsp;2023&nbsp;roku, a&nbsp;w&nbsp;2024&nbsp;roku liczba ta wzrosła do&nbsp;`r filter(popularnosc.konkurencji, nazwa_konkurencji=="Bieg z obciążeniem", rok=="2024")$liczba_uczestnikow`.
+
+## Popularność w poszczególnych państwach i miastach
+```{r panstwa}
+panstwa <- dbGetQuery(mydb, "
+SELECT panstwa.panstwo, 
+ SUM(zawody.liczba_widzow) as suma_widzow
+FROM zawody 
+JOIN miasta ON miasta.id_miasta = zawody.id_miasta
+JOIN panstwa ON miasta.id_panstwa = panstwa.id_panstwa
+GROUP BY panstwa.panstwo
+")
+panstwa$panstwo <- factor(panstwa$panstwo, 
+           levels=panstwa$panstwo[order(panstwa$suma_widzow, decreasing=TRUE)])
+
+plot_ly(data = panstwa,
+       x = ~panstwo,
+       y = ~suma_widzow,
+       type = "bar") %>%
+ layout(title = "Wykres 3: Popularność zawodów w poszczególnych państwach",
+        xaxis = list(title = "Państwo"),
+        yaxis = list(title = "Liczba widzów"))
+```
+
+Zawody są najbardziej popularne na Węgrzech - od początku organizowania zawody
+zgromadziły tam `r format(filter(panstwa, panstwo=="Węgry")$suma_widzow, big.mark=" ")` 
+widzów. Wśród państw azjatyckich najwięcej widzów obserwowało współzawodnictwo 
+chomików w&nbsp;Chinach - było to `r format(filter(panstwa, panstwo=="Chiny")$suma_widzow, big.mark=" ")`widzów, z&nbsp;kolei w&nbsp;Ameryce Północnej największe zainteresowanie wykazywali
+mieszkańcy USA (`r format(filter(panstwa, panstwo=="USA")$suma_widzow, big.mark=" ")`
+widzów), a&nbsp;w&nbsp;Ameryce Południowej - mieszkańcy Brazylii (`r format(filter(panstwa, panstwo=="Brazylia")$suma_widzow, big.mark=" ")` widzów).
+
+```{r miasta}
+miasta <- dbGetQuery(mydb, "
+SELECT panstwa.panstwo, 
+ miasta.miasto, 
+ SUM(zawody.liczba_widzow) as suma_widzow
+FROM zawody 
+JOIN miasta ON miasta.id_miasta = zawody.id_miasta
+JOIN panstwa ON miasta.id_panstwa = panstwa.id_panstwa
+GROUP BY miasta.miasto
+")
+
+miasta$miasto <- factor(miasta$miasto,
+                       levels=miasta$miasto[order(miasta$suma_widzow, decreasing=TRUE)])
+
+miasta1 <- filter(miasta, panstwo=="USA" | panstwo=="Australia" | panstwo=="Brazylia"
+                 | panstwo=="Chiny")
+miasta2 <- filter(miasta, panstwo=="Niemcy" | panstwo=="Węgry" | panstwo=="Włochy")
+miasta3 <- filter(miasta, panstwo=="Czechy" | panstwo=="Francja")
+
+
+miasta1$grupa <- "USA, Australia, Brazylia, Chiny"
+miasta2$grupa <- "Niemcy, Węgry, Włochy"
+miasta3$grupa <- "Czechy, Francja"
+
+dane_do_wykresu <- rbind(miasta1, miasta2, miasta3)
+
+plot_ly(data = dane_do_wykresu,
+       x = ~miasto,
+       y = ~suma_widzow, 
+       type = "bar",
+       text = ~panstwo,
+       transforms = list(
+         list(type = "filter",
+           target = ~grupa,
+           operation = "=",
+           value = "USA, Australia, Brazylia, Chiny"))) %>%
+ layout(title = "Wykres 4: Popularność zawodów",
+   xaxis = list(title = "Miasto"),
+   yaxis = list(title = "Liczba widzów"),
+   
+   margin = list(r = 200),
+   
+   updatemenus = list(
+     list(type = "buttons",
+       direction = "down",
+       x = 1.2,
+       y = 1,
+       xanchor = "left",
+       yanchor = "top",
+       buttons = list(
+         
+         list(label = "USA, Australia, Brazylia, Chiny",
+              method = "restyle",
+              args = list("transforms[0].value", "USA, Australia, Brazylia, Chiny")),
+         
+         list(label = "Niemcy, Węgry, Włochy",
+              method = "restyle",
+              args = list("transforms[0].value", "Niemcy, Węgry, Włochy")),
+         
+         list(label = "Czechy, Francja",
+              method = "restyle",
+              args = list("transforms[0].value", "Czechy, Francja"))
+       ))))
+```
+
+W&nbsp;poszczególnych państwach miastami, które zgromadziły najwięcej widzów były:
+`r (filter(miasta, panstwo=="Chiny") %>% filter(suma_widzow==max(suma_widzow)))$miasto` 
+w&nbsp;Chinach, `r (filter(miasta, panstwo=="USA") %>% filter(suma_widzow==max(suma_widzow)))$miasto` 
+w&nbsp;USA, `r (filter(miasta, panstwo=="Australia") %>% filter(suma_widzow==max(suma_widzow)))$miasto` w&nbsp;Australii, `r (filter(miasta, panstwo=="Brazylia") %>% filter(suma_widzow==max(suma_widzow)))$miasto` w&nbsp;Brazylii (było to jedyne miasto, w&nbsp;którym odbyły się zawody), `r (filter(miasta, panstwo=="Niemcy") %>% filter(suma_widzow==max(suma_widzow)))$miasto` w&nbsp;Niemczech, `r (filter(miasta, panstwo=="Węgry") %>% filter(suma_widzow==max(suma_widzow)))$miasto` na&nbsp;Węgrzech, `r (filter(miasta, panstwo=="Włochy") %>% filter(suma_widzow==max(suma_widzow)))$miasto` we&nbsp;Włoszech, `r (filter(miasta, panstwo=="Czechy") %>% filter(suma_widzow==max(suma_widzow)))$miasto` w&nbsp;Czechach, `r (filter(miasta, panstwo=="Francja") %>% filter(suma_widzow==max(suma_widzow)))$miasto` we&nbsp;Francji. Największe dysproporcje w&nbsp;liczbie widzów w&nbsp;poszczególnych 
+miastach wystąpiły na&nbsp;Węgrzech.
+
+## Liczba zawodów zorganizowanych w poszczególnych państwach
+```{r zawody_panstwa}
+zawody.panstwa <- dbGetQuery(mydb, "
+SELECT 
+ panstwo, 
+ COUNT(id_zawodow) AS liczba_zawodow
+FROM panstwa
+JOIN miasta on panstwa.id_panstwa = miasta.id_panstwa
+JOIN zawody on miasta.id_miasta = zawody.id_miasta
+GROUP BY panstwo
+ORDER BY liczba_zawodow DESC
+")
+
+zawody.panstwa$panstwo <- factor(zawody.panstwa$panstwo,
+levels=zawody.panstwa$panstwo[order(zawody.panstwa$liczba_zawodow, decreasing=TRUE)])
+
+plot_ly(data = zawody.panstwa, 
+       x = ~as.factor(panstwo), 
+       y = ~liczba_zawodow, 
+       color = ~panstwo, 
+       type = "bar") %>%
+ layout(title = "Wykres 5: Liczba zawodów zorganizowanych w poszczególnych państwach",
+        xaxis = list(title = "Państwo"),
+        yaxis = list(title = "Liczba zawodów"),
+        barmode = "group")
+```
+
+Najwięcej zawodów zostało zorganizowanych na&nbsp;Węgrzech, zawody odbyły się tam
+`r filter(zawody.panstwa, panstwo=="Węgry")$liczba_zawodow` razy. Najmniej
+zawodów miało miejsce w&nbsp;Brazylii - chomiki mogły tam współzawodniczyć 
+`r filter(zawody.panstwa, panstwo=="Brazylia")$liczba_zawodow` razy. Wykres
+liczby zawodów zorganizowanych w poszczególnych państwach jest bardzo podobny
+do wykresu liczby widzów w&nbsp;tych państwach, można zatem stwierdzić, że te dwie
+wielkości są do siebie proporcjonalne.
+
+## Wpływ liczby uczestników zawodów na liczbę widzów
+```{r uczestnicy_widzowie}
+uczestnicy.widzowie <- dbGetQuery(mydb, "
+SELECT 
+   zawody.id_zawodow,
+   YEAR(zawody.data_zawodow) AS data,
+   COUNT(DISTINCT zawody_uczestnicy.id_uczestnika) AS liczba_chomikow,
+   zawody.liczba_widzow
+FROM zawody
+JOIN zawody_uczestnicy
+   ON zawody.id_zawodow = zawody_uczestnicy.id_zawodow
+GROUP BY zawody.id_zawodow;  
+")
+
+uczestnicy.widzowie <- uczestnicy.widzowie %>%
+ arrange(as.integer(liczba_chomikow))
+
+lista_wykresow <- uczestnicy.widzowie %>%
+ group_split(as.factor(data)) %>%
+ lapply(function(df) {
+   sort.liczba_chomikow <- sort(unique(as.integer(df$liczba_chomikow)))
+   
+   plot_ly(data = df, 
+           x = ~as.factor(liczba_chomikow), 
+           y = ~liczba_widzow, 
+           type = "bar",
+           name = ~unique(data)) %>%
+     layout(
+       xaxis = list(
+         title = "",
+         type = "category",
+         tickfont = list(size = 8),
+         categoryorder = "array",
+         categoryarray = sort.liczba_chomikow
+       ),
+       yaxis = list(title = "Liczba widzów"))})
+
+subplot(lista_wykresow, nrows = 1, shareY = TRUE, titleX = FALSE) %>%
+ layout(title = list(
+     text = "Wykres 6: Wpływ liczby uczestników na liczbę widzów",
+     y = 0.95),
+   
+   margin = list(b = 60, t = 50), 
+   annotations = list(
+     list(x = 0.5,
+       y = -0.15,
+       text = "Liczba uczestników",
+       xref = "paper",
+       yref = "paper",
+       showarrow = FALSE,
+       font = list(size = 14)
+     )))
+```
+
+Wykres nie&nbsp;pozwala stwierdzić jednoznacznej zależności między liczbą uczestników
+a&nbsp;liczbą widzów. Ciekawy był pod tym względem rok 2023 - zawody, w&nbsp;których 
+wystąpił 1 uczestnik zgromadziły `r filter(uczestnicy.widzowie, data=="2023", liczba_chomikow=="1")$liczba_widzow` widzów, natomiast zawody z&nbsp;17 uczestnikami
+obserwowało `r filter(uczestnicy.widzowie, data=="2023", liczba_chomikow=="17")$liczba_widzow`
+widzów.
+
+# Rentowność federacji
+W&nbsp;tej sekcji została przeanalizowana rentowność federacji.
+
+```{r rentownosc}
+rentownosc.firmy <- dbGetQuery(mydb, "
+SELECT         
+   YEAR(data_zawodow) AS rok,
+   SUM(przychod)+SUM(-koszt_organizacji) AS rentownosc
+FROM zawody
+GROUP BY rok
+ORDER BY rok;
+")
+
+plot_ly(data = rentownosc.firmy, 
+       x = ~as.factor(rok), 
+       y = ~rentownosc, 
+       type = "scatter",
+       mode = "lines+markers") %>%
+ layout(title = "Wykres 7: Rentowność federacji",
+        xaxis = list(title = "Rok"),
+        yaxis = list(title = "Rentowność"))
+```
+
+Federacja jest rentowna finansowo, średni zysk (nie uwzględniając roku 2026, który
+zaburza analizę, ponieważ nie&nbsp;jest jeszcze określony ostateczny zysk firmy)
+wynosi `r format(mean(filter(rentownosc.firmy, rok!="2026")$rentownosc), big.mark=" ", scientific=FALSE)`&nbsp;zł. Najwyższy zysk został osiągnięty w `r filter(rentownosc.firmy, rentownosc==max(rentownosc))$rok` roku, wynosił `r format(filter(rentownosc.firmy, rentownosc==max(rentownosc))$rentownosc, big.mark=" ", scientific=FALSE)`&nbsp;zł.
+
+# Atrakcyjność kategorii dla widzów i sponsorów
+Celem tej sekcji jest stwierdzenie, która kategoria (naturalna czy Formuła&nbsp;Ch)
+wywołuje większe zainteresowanie wśród widzów oraz która kategoria jest
+chętniej wspierana przez sponsorów.
+
+```{r atrakcyjnosc_widzowie}
+atrakcyjnosc.widzowie <- dbGetQuery(mydb, "
+SELECT
+   nazwa_kategorii,
+   SUM(liczba_widzow) AS `popularnosc_dla_widzow`
+FROM kategorie
+JOIN konkurencje ON konkurencje.id_kategorii = kategorie.id_kategorii               
+JOIN konkurencje_zawody ON konkurencje.id_konkurencji = konkurencje_zawody.id_konkurencji
+JOIN zawody ON konkurencje_zawody.id_zawodow = zawody.id_zawodow
+GROUP BY nazwa_kategorii
+ORDER BY `popularnosc_dla_widzow` DESC;
+")
+
+plot_ly(data = atrakcyjnosc.widzowie, 
+       x = ~nazwa_kategorii, 
+       y = ~popularnosc_dla_widzow, 
+       color = ~nazwa_kategorii,
+       type = "bar") %>%
+ layout(title = "Wykres 8: Atrakcyjność kategorii dla widzów",
+        xaxis = list(title = "Nazwa kategorii"),
+        yaxis = list(title = "Liczba widzów"))
+```
+
+Bardziej atrakcyjna dla widzów jest kategoria naturalna, łącznie ta kategoria
+zgromadziła `r format(filter(atrakcyjnosc.widzowie, nazwa_kategorii=="Naturalna")$popularnosc_dla_widzow, big.mark=" ", scientific=FALSE)`
+widzów, a&nbsp;kategoria formuła&nbsp;Ch - `r format(filter(atrakcyjnosc.widzowie, nazwa_kategorii=="Formuła Ch")$popularnosc_dla_widzow, big.mark=" ", scientific=FALSE)` widzów, różnica wynosi `r format(filter(atrakcyjnosc.widzowie, nazwa_kategorii=="Naturalna")$popularnosc_dla_widzow - filter(atrakcyjnosc.widzowie, nazwa_kategorii=="Formuła Ch")$popularnosc_dla_widzow, big.mark=" ",  scientific=FALSE)`.
+
+```{r atrakcyjnosc_sponsorzy}
+atrakcyjnosc.sponsorzy <- dbGetQuery(mydb, "
+SELECT
+   nazwa_kategorii,
+   SUM(kwota) AS `kwota_od_sponsorow`
+FROM kategorie      
+JOIN konkurencje ON konkurencje.id_kategorii = kategorie.id_kategorii
+JOIN konkurencje_zawody ON konkurencje.id_konkurencji = konkurencje_zawody.id_konkurencji
+JOIN zawody ON konkurencje_zawody.id_zawodow = zawody.id_zawodow
+JOIN zawody_uczestnicy ON zawody.id_zawodow = zawody_uczestnicy.id_zawodow
+JOIN sportowcy ON zawody_uczestnicy.id_uczestnika = sportowcy.id_uczestnika
+JOIN sportowcy_sponsorzy ON sportowcy_sponsorzy.id_uczestnika = sportowcy.id_uczestnika
+GROUP BY nazwa_kategorii
+ORDER BY `kwota_od_sponsorow` DESC;
+")
+
+plot_ly(data = atrakcyjnosc.sponsorzy, 
+       x = ~nazwa_kategorii, 
+       y = ~kwota_od_sponsorow, 
+       color = ~nazwa_kategorii,
+       type = "bar") %>%
+ layout(title = "Wykres 9: Atrakcyjność kategorii dla sponsorów",
+        xaxis = list(title = "Nazwa kategorii"),
+        yaxis = list(title = "Kwota od sponsorów"))
+```
+
+Również dla sponsorów bardziej atrakcyjna jest kategoria naturalna, łączna
+przekazana kwota wynosi `r format(filter(atrakcyjnosc.sponsorzy, nazwa_kategorii=="Naturalna")$kwota_od_sponsorow, big.mark=" ", scientific=FALSE)`&nbsp;zł,
+natomiast dla kategorii Formuła&nbsp;Ch łączna kwota jest równa `r format(filter(atrakcyjnosc.sponsorzy, nazwa_kategorii=="Formuła Ch")$kwota_od_sponsorow, big.mark=" ", scientific=FALSE)`&nbsp;zł.
+Wynik ten może być zastanawiający, ponieważ kategoria Formuła&nbsp;Ch wymaga większych
+nakładów na&nbsp;sprzęt, z&nbsp;drugiej strony kategoria naturalna może wymagać większej
+liczby treningów, co&nbsp;również wiąże się z&nbsp;większymi kosztami.
+
+# Analiza czynników wpływających na osiągane wyniki
+W&nbsp;tej sekcji zostały przeanalizowane wybrane czynniki mogące wpływać na&nbsp;osiągane przez sportowców wyniki: wartość sprzętu oraz stosowanie niedozwolonych
+substancji.
+
+## Wartość sprzętu a osiągane wyniki
+```{r wartosc_sprzetu}
+wartosc.sprzetu <- dbGetQuery(mydb, "
+SELECT
+   kategorie.nazwa_kategorii,
+   kategorie.czy_wymaga_sprzetu,
+   sportowcy.id_uczestnika,
+   sportowcy.wartosc_wyposazenia,
+   AVG(konkurencje_uczestnicy.wynik_uczestnika) AS sredni_wynik,
+   COUNT(konkurencje_zawody.zwyciezca_konkurencji) AS liczba_wygranych
+FROM sportowcy
+JOIN konkurencje_uczestnicy ON sportowcy.id_uczestnika = konkurencje_uczestnicy.id_uczestnika
+JOIN konkurencje ON konkurencje_uczestnicy.id_konkurencji = konkurencje.id_konkurencji
+JOIN kategorie ON konkurencje.id_kategorii = kategorie.id_kategorii
+JOIN konkurencje_zawody ON sportowcy.id_uczestnika = konkurencje_zawody.zwyciezca_konkurencji 
+AND konkurencje.id_konkurencji = konkurencje_zawody.id_konkurencji
+GROUP BY sportowcy.id_uczestnika, kategorie.id_kategorii;
+")
+
+czy_sprzet <- wartosc.sprzetu$czy_wymaga_sprzetu
+wartosc.sprzetu$czy_wymaga_sprzetu <- ifelse(czy_sprzet, "wymaga sprzętu",
+                                            "nie wymaga sprzętu")
+
+lista_danych <- split(wartosc.sprzetu, wartosc.sprzetu$czy_wymaga_sprzetu)
+
+p1 <- plot_ly(data = lista_danych[[1]], 
+             x = ~as.factor(wartosc_wyposazenia), 
+             y = ~sredni_wynik, 
+             type = "bar",
+             name = names(lista_danych)[1]) %>%
+     layout(xaxis = list(title = names(lista_danych)[1], tickangle = -90))
+
+
+p2 <- plot_ly(data = lista_danych[[2]], 
+             x = ~as.factor(wartosc_wyposazenia), 
+             y = ~sredni_wynik, 
+             type = "bar",
+             name = names(lista_danych)[2]) %>%
+     layout(xaxis = list(title = names(lista_danych)[2], tickangle = -90))
+
+subplot(p1, p2, 
+       nrows = 1,
+       shareY = TRUE) %>%
+ layout(title = "Wykres 10: Liczba wygranych konkurencji w zależności od wartości wyposażenia",
+        yaxis = list(title = "Średni wynik"),
+   
+   margin = list(b = 60, t = 50), 
+   annotations = list(
+     list(x = 0.5,
+       y = -0.15,
+       text = "Wartość sprzętu",
+       xref = "paper",
+       yref = "paper",
+       showarrow = FALSE,
+       font = list(size = 14)
+     )))
+
+
+wyniki <- dbGetQuery(mydb, "
+SELECT 
+   kategorie.nazwa_kategorii,
+   kategorie.czy_wymaga_sprzetu,
+   sportowcy.id_uczestnika,
+   sportowcy.wartosc_wyposazenia,
+   AVG(konkurencje_uczestnicy.wynik_uczestnika) AS sredni_wynik,
+   COUNT(konkurencje_zawody.zwyciezca_konkurencji) AS liczba_wygranych
+FROM sportowcy
+JOIN konkurencje_uczestnicy ON sportowcy.id_uczestnika = konkurencje_uczestnicy.id_uczestnika
+JOIN konkurencje ON konkurencje_uczestnicy.id_konkurencji = konkurencje.id_konkurencji
+JOIN kategorie ON konkurencje.id_kategorii = kategorie.id_kategorii
+JOIN konkurencje_zawody ON sportowcy.id_uczestnika = konkurencje_zawody.zwyciezca_konkurencji 
+   AND konkurencje.id_konkurencji = konkurencje_zawody.id_konkurencji
+GROUP BY sportowcy.id_uczestnika, kategorie.id_kategorii;
+")
+
+wyniki$sprzet_label <- ifelse(wyniki$czy_wymaga_sprzetu == 1, "Wymaga sprzętu", "Nie wymaga sprzętu")
+
+df_wymaga <- filter(wyniki, czy_wymaga_sprzetu == 1)
+df_nie_wymaga <- filter(wyniki, czy_wymaga_sprzetu == 0)
+
+p3 <- plot_ly(data = df_nie_wymaga, 
+               x = ~wartosc_wyposazenia, 
+               y = ~sredni_wynik, 
+               color = ~nazwa_kategorii,
+               legendgroup = ~nazwa_kategorii,
+               type = "scatter", 
+               mode = "markers",
+               text = ~paste("ID:", id_uczestnika),
+               marker = list(size = ~liczba_wygranych, 
+                             sizemode = "area", 
+                             sizeref = 0.1)) %>%
+       layout(annotations = list(
+           list(x = 0.5, y = 1.05, text = "Nie wymaga sprzętu", showarrow = F, xref="paper", yref="paper")))
+
+p4 <- plot_ly(data = df_wymaga, 
+               x = ~wartosc_wyposazenia, 
+               y = ~sredni_wynik, 
+               color = ~nazwa_kategorii,
+               legendgroup = ~nazwa_kategorii,
+               showlegend = FALSE,
+               type = "scatter", 
+               mode = "markers",
+               text = ~paste("ID:", id_uczestnika),
+               marker = list(size = ~liczba_wygranych, 
+                             sizemode = "area", 
+                             sizeref = 0.1)) %>%
+       layout(annotations = list(
+           list(x = 0.5, 
+                y = 1.05, 
+                text = "Wymaga sprzętu", 
+                showarrow = F, xref="paper", 
+                yref="paper")))
+
+subplot(p3, p4, 
+       shareY = TRUE, 
+       titleX = TRUE) %>%
+ layout(title = "Analiza: wartość wyposażenia vs wyniki",
+        xaxis = list(title = "Wartość wyposażenia"),
+        xaxis2 = list(title = "Wartość wyposażenia"),
+        yaxis = list(title = "Średni wynik"))
+```
+
+Ze&nbsp;względu na&nbsp;specyfikę kategorii, jedynie w&nbsp;formule&nbsp;Ch wartość
+sprzętu mogłaby znacząco wpływać na osiągane wyniki, jednak nie ma 
+bezpośredniej zależności między wartością wyposażenia a&nbsp;wynikami -
+uczestnicy, którzy osiągali najlepsze wyniki niekoniecznie posiadali
+najdroższy sprzęt. Wykres dla kategorii naturalnej (niewymagającej sprzętu) pełni 
+jedynie rolę porównawczą.
+
+## Stosowanie dopingu a osiągane wyniki
+```{r doping}
+doping <- dbGetQuery(mydb, "
+SELECT
+   sportowcy.id_uczestnika,
+   AVG(wynik_uczestnika) AS sredni_wynik,
+   COUNT(id_kontroli) AS liczba_dyskwalifikacji,
+   IF(COUNT(id_kontroli) > 0, 'Zdyskwalifikowany', 'Niezdyskwalifikowany') AS status_antydopingowy
+FROM sportowcy
+JOIN konkurencje_uczestnicy ON sportowcy.id_uczestnika = konkurencje_uczestnicy.id_uczestnika
+LEFT JOIN zdyskwalifikowani ON sportowcy.id_uczestnika = zdyskwalifikowani.id_uczestnika
+GROUP BY sportowcy.id_uczestnika;
+")
+
+plot_ly(data = doping,
+       x = ~as.factor(liczba_dyskwalifikacji),
+       y = ~sredni_wynik,
+       color = ~as.factor(liczba_dyskwalifikacji),
+       type = "box") %>%
+ layout(title = "Wykres 11: Średni wynik w zależności od liczby dyskwalifikacji",
+        xaxis = list(title = "Liczba dyskwalifikacji"),
+        yaxis = list(title = "Średni wynik"))
+```
+
+Mediana wyniku wśród niezdyskwalifikowanych zawodników wynosi `r median(filter(doping, liczba_dyskwalifikacji==0)$sredni_wynik)`, natomiast wśród zdyskwalifikowanych 
+`r median(filter(doping, liczba_dyskwalifikacji!=0)$sredni_wynik)` - wartości te
+są zbliżone (wśród niezdyskwalifikowanych mediana jest minimalnie większa), co 
+dowodzi, że&nbsp;stosowanie niedozwolonych substancji nie&nbsp;daje przewagi punktowej.
+
+# Liczba zdyskwalifikowanych uczestników w zależności od konkurencji
+```{r doping_konkurencje}
+doping.konkurencje <- dbGetQuery(mydb, "
+SELECT 
+ nazwa_konkurencji, 
+ SUM(wynik_kontroli='pozytywny') AS liczba_oszustow
+FROM konkurencje
+JOIN konkurencje_uczestnicy ON konkurencje.id_konkurencji = konkurencje_uczestnicy.id_konkurencji
+JOIN zdyskwalifikowani ON konkurencje_uczestnicy.id_uczestnika = zdyskwalifikowani.id_uczestnika
+JOIN kontrole_antydopingowe ON zdyskwalifikowani.id_kontroli = kontrole_antydopingowe.id_kontroli
+GROUP BY nazwa_konkurencji
+ORDER BY liczba_oszustow DESC
+")
+doping.konkurencje$nazwa_konkurencji <- factor(doping.konkurencje$nazwa_konkurencji,
+levels=doping.konkurencje$nazwa_konkurencji[order(doping.konkurencje$liczba_oszustow, decreasing=TRUE)])
+
+plot_ly(data = doping.konkurencje,
+       x = ~as.factor(nazwa_konkurencji),
+       y = ~liczba_oszustow,
+       type = "bar") %>%
+ layout(title = "Wykres 12: Liczba zdyskwalifikowanych zawodników w zależności od konkurencji",
+        xaxis = list(title = "Konkurencja"),
+        yaxis = list(title = "Liczba zdyskwalifikowanych"))
+
+oszusci_w_konkurencjach <- dbGetQuery(mydb, "
+SELECT 
+   konkurencje.nazwa_konkurencji, 
+   SUM(kontrole_antydopingowe.wynik_kontroli = 'pozytywny') AS liczba_oszustow
+FROM konkurencje
+JOIN konkurencje_uczestnicy ON konkurencje.id_konkurencji = konkurencje_uczestnicy.id_konkurencji
+JOIN zdyskwalifikowani ON konkurencje_uczestnicy.id_uczestnika = zdyskwalifikowani.id_uczestnika
+JOIN kontrole_antydopingowe ON zdyskwalifikowani.id_kontroli = kontrole_antydopingowe.id_kontroli
+GROUP BY konkurencje.nazwa_konkurencji
+ORDER BY liczba_oszustow DESC;
+")
+
+plot_ly(data = oszusci_w_konkurencjach, 
+       labels = ~nazwa_konkurencji, 
+       values = ~liczba_oszustow, 
+       type = "pie",
+       textposition = "inside",
+       textinfo = "label+percent") %>% 
+ layout(title = "Procentowy udział oszustów w poszczególnych konkurencjach")
+
+df_doping <- dbGetQuery(mydb,"
+SELECT
+   sportowcy.id_uczestnika,
+   AVG(wynik_uczestnika) AS sredni_wynik,
+   COUNT(id_kontroli) AS liczba_dyskwalifikacji,
+   IF(COUNT(id_kontroli) > 0, 'Zdyskwalifikowany', 'Niezdyskwalifikowany') AS status_antydopingowy
+FROM sportowcy
+JOIN konkurencje_uczestnicy ON sportowcy.id_uczestnika = konkurencje_uczestnicy.id_uczestnika
+LEFT JOIN zdyskwalifikowani ON sportowcy.id_uczestnika = zdyskwalifikowani.id_uczestnika
+GROUP BY sportowcy.id_uczestnika;
+")
+
+plot_ly(data = df_doping,
+       x = ~status_antydopingowy,
+       y = ~sredni_wynik,
+       color = ~status_antydopingowy,
+       colors = c("Niezdyskwalifikowany" = "green", "Zdyskwalifikowany" = "red"),
+       type = "box",
+       boxpoints = "all",
+       jitter = 0.3,
+       pointpos = -1.8) %>% 
+ layout(
+   title = "Porównanie wyników: Niezdyskwalifikowani, a zdyskwalifikowani",
+   xaxis = list(title = "Status kontroli"),
+   yaxis = list(title = "Średni wynik"))
+```
+
+Najwięcej zdyskwalifikowanych uczestników było w&nbsp;kategorii bieg z&nbsp;obciążeniem
+(`r filter(doping.konkurencje, nazwa_konkurencji=="Bieg z obciążeniem")$liczba_oszustow`
+zawodników), co mogło być spowodowane wymagającym charakterem tej konkurencji.
+Kategorią, w&nbsp;której zdyskwalifikowanych zostało najmniej zawodników był wyścig
+wytrzymałościowy w&nbsp;Formule&nbsp;Ch (`r filter(doping.konkurencje, nazwa_konkurencji=="Wyścig wytrzymałościowy - Formuła Ch")$liczba_oszustow` zawodników). Średnia liczba
+dyskwalifikacji w&nbsp;jednej konkurencji wynosi `r mean(doping.konkurencje$liczba_oszustow)`
+uczestników. Wskaźniki sumaryczne wśród zawodników zdyskwalifikowanych i&nbsp;niezdyskwalifikowanych
+są zbliżone, co potwierdza otrzymany wcześniej wniosek, że stosowanie niedozwolonych
+substancji niekoniecznie wpływa na&nbsp;otrzymanie lepszych wyników, pozwala
+jednak uniknąć bardzo słabych wyników (minimalny średni wynik wśród zdyskwalifikowanych
+jest wyższy niż wśród niezdyskwalifikowanych).
+
+# Najlepsze chomiki i ich czas kariery
+
+```{r najlepsze_chomiki}
+knitr::include_url("najlepsze_chomiki.html", height = "400px")
+```
+
+Zawodnik o&nbsp;ID&nbsp;18 pojawia się najczęściej jako najlepszy sportowca w&nbsp;konkurencjach. Są 4&nbsp;konkurencje, w&nbsp;których jest tylko jeden najlepszy sportowca, a&nbsp;w&nbsp;konkurencji nr. 4 jest aż 6&nbsp;sportowców dzielących tytuł.
+
+```{r czas_trwania_kariery}
+knitr::include_url("czas_trwania_kariery.html", height = "400px")
+```
+
+
+Najdłuższy czas na szczycie kariery ma aktualnie zawodnik o&nbsp;ID&nbsp;33 i&nbsp;liczy aż&nbsp;1426&nbsp;dni.
